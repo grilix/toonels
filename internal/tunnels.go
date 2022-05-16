@@ -17,7 +17,7 @@ type SSHNode struct {
 }
 
 type SSHTunnel struct {
-	Jump   SSHNode
+	Jump   *SSHNode
 	Local  netip.AddrPort
 	Target netip.AddrPort
 	Log    *log.Logger
@@ -37,34 +37,18 @@ func (tunnel *SSHTunnel) logf(f string, args ...any) {
 }
 
 func (tunnel *SSHTunnel) Start() error {
-	listener, err := net.Listen("tcp", tunnel.Local.String())
-	if err != nil {
-		return err
-	}
-	defer listener.Close()
-
 	tunnel.logf(
-		"Starting: %s <- %s -> %s",
+		"Starting: %s -> %s -> %s",
 		tunnel.Local.String(),
 		tunnel.Jump.Addr.String(),
 		tunnel.Target.String(),
 	)
 
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			return err
-		}
-		tunnel.logf("accepted connection: %s", tunnel.Local.String())
-		go tunnel.forward(conn)
+	listener, err := net.Listen("tcp", tunnel.Local.String())
+	if err != nil {
+		return err
 	}
-}
-func (tunnel *SSHTunnel) forward(localConn net.Conn) {
-	tunnel.logf(
-		"%s -> %s\n",
-		tunnel.Local.String(),
-		tunnel.Jump.Addr.String(),
-	)
+	defer listener.Close()
 
 	serverConn, err := ssh.Dial(
 		"tcp",
@@ -72,9 +56,21 @@ func (tunnel *SSHTunnel) forward(localConn net.Conn) {
 		tunnel.Jump.Config,
 	)
 	if err != nil {
-		tunnel.logErr(err)
-		return
+		return err
 	}
+	defer serverConn.Close()
+
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			return err
+		}
+		tunnel.logf("accepted connection: %s", tunnel.Local.String())
+		go tunnel.forward(serverConn, conn)
+	}
+}
+
+func (tunnel *SSHTunnel) forward(serverConn *ssh.Client, localConn net.Conn) {
 	remoteConn, err := serverConn.Dial("tcp", tunnel.Target.String())
 	if err != nil {
 		tunnel.logErr(err)

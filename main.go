@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/netip"
 	"os"
+	"sync"
 
 	"github.com/grilix/toonels/internal"
 	"github.com/pkg/errors"
@@ -79,7 +80,7 @@ func NewSSHNode(jump JumpNode) (*internal.SSHNode, error) {
 	}, nil
 }
 
-func NewTunnel(jump internal.SSHNode, local, target string) (*internal.SSHTunnel, error) {
+func NewTunnel(jump *internal.SSHNode, local, target string) (*internal.SSHTunnel, error) {
 	localEndpoint, err := netip.ParseAddrPort(local)
 	if err != nil {
 		return nil, errors.Wrap(err, fmt.Sprintf(
@@ -113,6 +114,9 @@ func main() {
 		log.Fatal(err)
 	}
 	logger := log.New(os.Stdout, "", log.Ldate|log.Lmicroseconds)
+	var wg sync.WaitGroup
+
+	wg.Add(len(tunnelsFile.Jump))
 
 	for _, jump := range tunnelsFile.Jump {
 		jumpNode, err := NewSSHNode(jump)
@@ -121,18 +125,17 @@ func main() {
 		}
 
 		for _, endpoints := range jump.Tunnels {
-			go func(jump JumpNode, endpoints TunnelEndpoints) {
-				tunnel, err := NewTunnel(*jumpNode, endpoints.Local, endpoints.Target)
-				if err != nil {
-					log.Fatal(err)
-				}
-				tunnel.Log = logger
+			tunnel, err := NewTunnel(jumpNode, endpoints.Local, endpoints.Target)
+			if err != nil {
+				log.Fatal(err)
+			}
+			tunnel.Log = logger
 
+			go func(tunnel *internal.SSHTunnel) {
 				log.Fatal(tunnel.Start())
-			}(jump, endpoints)
+			}(tunnel)
 		}
 	}
 
-	for {
-	}
+	wg.Wait()
 }
